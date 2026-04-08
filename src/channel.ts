@@ -285,7 +285,19 @@ export function createMilkyPlugin() {
         const group = isGroupTarget(account.accountId, target);
 
         const mediaType = detectMediaType(String(mediaUrl));
-        const segmentType = mediaType === "record" ? "record" : mediaType === "video" ? "video" : "image";
+        const segmentType = mediaType === "record" ? "record" : "image";
+        // Note: Lagrange.Milky does not implement outgoing video segments;
+        // if video URL detected, attempt it but degrade to image on failure.
+        if (mediaType === "video") {
+          const videoSegments = [{ type: "video" as const, data: { uri: String(mediaUrl) } }];
+          try {
+            const result = await sendMessage(client, group, target, videoSegments);
+            return { channel: CHANNEL_ID, messageId: String(result.message_seq), chatId: target };
+          } catch (err: any) {
+            log?.warn?.(`Milky sendVideo failed (backend may not implement it): ${err?.message || err}`);
+            // Fall through to send as image instead
+          }
+        }
         const segments = [{ type: segmentType, data: { uri: mediaUrl } }];
 
         try {
@@ -627,7 +639,8 @@ async function handleMessageReceive(
 
 /**
  * Handle friend request events.
- * Auto-accept if the requesting user is in the allowlist.
+ * Attempts auto-accept for allowlisted users; degrades gracefully if
+ * the backend does not implement acceptFriendRequest.
  */
 async function handleFriendRequest(
   data: any,
@@ -639,19 +652,20 @@ async function handleFriendRequest(
   try {
     const requesterId = String(data?.user_id ?? data?.sender_id ?? "");
     if (!requesterId) return;
+    if (!account.allowedUserIds.includes(requesterId)) return;
 
-    // Auto-accept if the user is in the allowedUserIds list
-    if (account.allowedUserIds.includes(requesterId)) {
-      await client.friend.acceptFriendRequest(data);
-      log?.info?.(`Milky auto-accepted friend request from ${requesterId}`);
-    }
+    await client.friend.acceptFriendRequest(data);
+    log?.info?.(`Milky auto-accepted friend request from ${requesterId}`);
   } catch (err: any) {
-    log?.warn?.(`Milky friend request handling failed: ${err?.message || err}`);
+    // Backend may not implement this API — log and continue
+    log?.warn?.(`Milky auto-accept friend request failed (API may not be implemented): ${err?.message || err}`);
   }
 }
 
 /**
  * Handle group request/invitation events.
+ * Attempts auto-accept; degrades gracefully if the backend
+ * does not implement acceptGroupRequest/acceptGroupInvitation.
  */
 async function handleGroupNotification(
   event: any,
@@ -664,16 +678,22 @@ async function handleGroupNotification(
     const requesterId = String(data?.user_id ?? "");
 
     if (event.event_type === "group_request") {
-      // Auto-accept group join requests from allowed users
       if (requesterId && account.allowedUserIds.includes(requesterId) && account.autoAcceptFriendRequest) {
-        await client.group.acceptGroupRequest(data);
-        log?.info?.(`Milky auto-accepted group request from ${requesterId}`);
+        try {
+          await client.group.acceptGroupRequest(data);
+          log?.info?.(`Milky auto-accepted group request from ${requesterId}`);
+        } catch (err: any) {
+          log?.warn?.(`Milky acceptGroupRequest failed (API may not be implemented): ${err?.message || err}`);
+        }
       }
     } else if (event.event_type === "group_invitation") {
-      // Auto-accept group invitations (bot was invited to a group)
       if (account.autoAcceptGroupInvitation) {
-        await client.group.acceptGroupInvitation(data);
-        log?.info?.(`Milky auto-accepted group invitation`);
+        try {
+          await client.group.acceptGroupInvitation(data);
+          log?.info?.(`Milky auto-accepted group invitation`);
+        } catch (err: any) {
+          log?.warn?.(`Milky acceptGroupInvitation failed (API may not be implemented): ${err?.message || err}`);
+        }
       }
     }
   } catch (err: any) {
