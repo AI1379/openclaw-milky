@@ -1,0 +1,9 @@
+{
+  "id": "openclaw-milky",
+  "channels": ["milky"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

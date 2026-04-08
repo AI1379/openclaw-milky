@@ -1,0 +1,9 @@
+{
+  "name": "openclaw-milky",
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "@saltify/milky-tea": "^0.1.2",
+    "eventsource": "^4.1.0"
+  }
+}

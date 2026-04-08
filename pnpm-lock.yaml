@@ -1,0 +1,60 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      '@saltify/milky-tea':
+        specifier: ^0.1.2
+        version: 0.1.2(eventsource@4.1.0)
+      eventsource:
+        specifier: ^4.1.0
+        version: 4.1.0
+
+packages:
+
+  '@saltify/milky-tea@0.1.2':
+    resolution: {integrity: sha512-mEDuvtmIdk1f9SUGVPmNFXlFhZmH2WR9gODTPNyPqVwJVzxauX/G32V5SU9fnJR6S83om9Xrznw46qO+yu+bFw==}
+    peerDependencies:
+      eventsource: ^4.1.0
+    peerDependenciesMeta:
+      eventsource:
+        optional: true
+
+  '@saltify/milky-types@1.2.0-rc.4':
+    resolution: {integrity: sha512-IUyE2GcdcLS5qw++k/PHHbpNhDeryKlfPMYLk+/UOn4MWHchvU1LQnqJmv/J/xSUYREy0Hac8fJ224O9j6PqqQ==}
+
+  eventsource-parser@3.0.6:
+    resolution: {integrity: sha512-Vo1ab+QXPzZ4tCa8SwIHJFaSzy4R6SHf7BY79rFBDf0idraZWAkYrDjDj8uWaSm3S2TK+hJ7/t1CEmZ7jXw+pg==}
+    engines: {node: '>=18.0.0'}
+
+  eventsource@4.1.0:
+    resolution: {integrity: sha512-2GuF51iuHX6A9xdTccMTsNb7VO0lHZihApxhvQzJB5A03DvHDd2FQepodbMaztPBmBcE/ox7o2gqaxGhYB9LhQ==}
+    engines: {node: '>=20.0.0'}
+
+  zod@4.3.6:
+    resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
+
+snapshots:
+
+  '@saltify/milky-tea@0.1.2(eventsource@4.1.0)':
+    dependencies:
+      '@saltify/milky-types': 1.2.0-rc.4
+    optionalDependencies:
+      eventsource: 4.1.0
+
+  '@saltify/milky-types@1.2.0-rc.4':
+    dependencies:
+      zod: 4.3.6
+
+  eventsource-parser@3.0.6: {}
+
+  eventsource@4.1.0:
+    dependencies:
+      eventsource-parser: 3.0.6
+
+  zod@4.3.6: {}
