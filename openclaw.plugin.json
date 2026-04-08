@@ -4,6 +4,26 @@
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "properties": {}
+    "properties": {
+      "accounts": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "properties": {
+            "baseURL": { "type": "string", "description": "Milky HTTP API base URL (e.g. http://127.0.0.1:3000)" },
+            "token": { "type": "string", "description": "Access token (leave empty if not required)" },
+            "enabled": { "type": "boolean", "default": true },
+            "connectionKind": { "type": "string", "enum": ["sse", "websocket", "auto"], "default": "websocket", "description": "Event streaming transport" },
+            "dmPolicy": { "type": "string", "enum": ["allowlist", "open"], "default": "allowlist" },
+            "allowedUserIds": { "type": "array", "items": { "type": "string" }, "default": [], "description": "QQ user IDs allowed to DM the bot" },
+            "groupPolicy": { "type": "string", "enum": ["all", "allowlist"], "default": "all", "description": "Group message policy" },
+            "allowedGroups": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Group IDs the bot responds to (when groupPolicy=allowlist)" },
+            "autoAcceptFriendRequest": { "type": "boolean", "default": true },
+            "autoAcceptGroupInvitation": { "type": "boolean", "default": true },
+            "botQQ": { "type": ["number", "null"], "default": null, "description": "Auto-detected, usually no need to set" }
+          }
+        }
+      }
+    }
   }
 }

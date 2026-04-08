@@ -19,9 +19,13 @@ export function resolveAccount(cfg: any, accountId?: string | null): ResolvedMil
     baseURL: acct.baseURL || "http://127.0.0.1:3000",
     token: acct.token || "",
     enabled: acct.enabled !== false,
+    connectionKind: acct.connectionKind || "websocket",
     dmPolicy: acct.dmPolicy || "allowlist",
     allowedUserIds: (acct.allowedUserIds || []).map(String),
-    connectionKind: acct.connectionKind || "sse",
+    allowedGroups: (acct.allowedGroups || []).map(String),
+    groupPolicy: acct.groupPolicy || "all",
+    autoAcceptFriendRequest: acct.autoAcceptFriendRequest !== false,
+    autoAcceptGroupInvitation: acct.autoAcceptGroupInvitation !== false,
     botQQ: acct.botQQ || null,
   };
 }

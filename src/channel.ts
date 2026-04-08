@@ -19,13 +19,17 @@ import type { ResolvedMilkyAccount } from "./types.js";
 const CHANNEL_ID = "milky";
 
 const MilkyAccountSchema = z.object({
-  baseURL: z.string().describe("Milky HTTP endpoint (e.g. http://127.0.0.1:3000)"),
-  token: z.string().default("").describe("Access token for Milky API"),
+  baseURL: z.string().describe("Milky HTTP API base URL (e.g. http://127.0.0.1:3000)"),
+  token: z.string().default("").describe("Access token for Milky API (leave empty if not required)"),
   enabled: z.boolean().default(true),
-  connectionKind: z.enum(["sse", "websocket", "auto"]).default("sse").describe("Event connection type"),
-  dmPolicy: z.enum(["allowlist", "open"]).default("allowlist").describe("DM authorization policy"),
+  connectionKind: z.enum(["sse", "websocket", "auto"]).default("websocket").describe("Event streaming transport. Lagrange.Milky uses WebSocket by default."),
+  dmPolicy: z.enum(["allowlist", "open"]).default("allowlist").describe("DM authorization policy: 'allowlist' only allows allowedUserIds, 'open' allows anyone"),
   allowedUserIds: z.array(z.string()).default([]).describe("QQ user IDs allowed to DM the bot"),
-  botQQ: z.number().nullable().default(null).describe("Bot QQ number (auto-detected on connect)"),
+  groupPolicy: z.enum(["all", "allowlist"]).default("all").describe("Group message policy: 'all' responds in all groups, 'allowlist' only responds in allowedGroups"),
+  allowedGroups: z.array(z.string()).default([]).describe("Group IDs the bot should respond to (only used when groupPolicy=allowlist)"),
+  autoAcceptFriendRequest: z.boolean().default(true).describe("Auto-accept friend requests from allowedUserIds"),
+  autoAcceptGroupInvitation: z.boolean().default(true).describe("Auto-accept group invitations sent to the bot"),
+  botQQ: z.number().nullable().default(null).describe("Bot QQ number (auto-detected on connect, usually no need to set)"),
 });
 
 const MilkyConfigSchema = buildChannelConfigSchema(
@@ -36,6 +40,10 @@ const MilkyConfigSchema = buildChannelConfigSchema(
     connectionKind: z.enum(["sse", "websocket", "auto"]).optional(),
     dmPolicy: z.enum(["allowlist", "open"]).optional(),
     allowedUserIds: z.array(z.string()).optional(),
+    groupPolicy: z.enum(["all", "allowlist"]).optional(),
+    allowedGroups: z.array(z.string()).optional(),
+    autoAcceptFriendRequest: z.boolean().optional(),
+    autoAcceptGroupInvitation: z.boolean().optional(),
     botQQ: z.number().nullable().optional(),
     accounts: z.record(z.string(), MilkyAccountSchema).optional(),
   }),
@@ -553,6 +561,14 @@ async function handleMessageReceive(
     }
   }
 
+  // Group policy check
+  if (chatType === "group" && account.groupPolicy === "allowlist") {
+    if (!account.allowedGroups.includes(from)) {
+      log?.info?.(`Milky group message blocked from group ${from}: not in allowedGroups`);
+      return;
+    }
+  }
+
   const msgCtx: Record<string, any> = {
     Body: text,
     From: from,
@@ -619,6 +635,7 @@ async function handleFriendRequest(
   account: ResolvedMilkyAccount,
   log: any,
 ) {
+  if (!account.autoAcceptFriendRequest) return;
   try {
     const requesterId = String(data?.user_id ?? data?.sender_id ?? "");
     if (!requesterId) return;
@@ -648,14 +665,16 @@ async function handleGroupNotification(
 
     if (event.event_type === "group_request") {
       // Auto-accept group join requests from allowed users
-      if (requesterId && account.allowedUserIds.includes(requesterId)) {
+      if (requesterId && account.allowedUserIds.includes(requesterId) && account.autoAcceptFriendRequest) {
         await client.group.acceptGroupRequest(data);
         log?.info?.(`Milky auto-accepted group request from ${requesterId}`);
       }
     } else if (event.event_type === "group_invitation") {
       // Auto-accept group invitations (bot was invited to a group)
-      await client.group.acceptGroupInvitation(data);
-      log?.info?.(`Milky auto-accepted group invitation`);
+      if (account.autoAcceptGroupInvitation) {
+        await client.group.acceptGroupInvitation(data);
+        log?.info?.(`Milky auto-accepted group invitation`);
+      }
     }
   } catch (err: any) {
     log?.warn?.(`Milky group notification handling failed: ${err?.message || err}`);
