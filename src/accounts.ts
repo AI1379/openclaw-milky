@@ -1,4 +1,4 @@
-import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk";
+import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/core";
 import type { ResolvedMilkyAccount } from "./types.js";
 
 const CHANNEL_ID = "milky";

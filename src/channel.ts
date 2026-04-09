@@ -2,7 +2,7 @@ import {
   DEFAULT_ACCOUNT_ID,
   setAccountEnabledInConfigSection,
   buildChannelConfigSchema,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/core";
 import { z } from "zod";
 import { listAccountIds, resolveAccount } from "./accounts.js";
 import {
@@ -12,7 +12,6 @@ import {
   buildOutboundSegments,
   type ParsedMessage,
 } from "./client.js";
-import { getMilkyRuntime } from "./runtime.js";
 import { authorizeUserForDm } from "./security.js";
 import type { ResolvedMilkyAccount } from "./types.js";
 
@@ -215,6 +214,7 @@ export function createMilkyPlugin() {
           const client = createClient(account.baseURL, account.token);
           const info = await client.system.getLoginInfo();
           return {
+            kind: "user" as const,
             id: String(info.uin),
             name: info.nickname,
           };
@@ -227,8 +227,9 @@ export function createMilkyPlugin() {
         try {
           const account = resolveAccount(cfg, accountId);
           const client = createClient(account.baseURL, account.token);
-          const result = await client.system.getFriendList({});
+          const result = await client.system.getFriendList({ no_cache: false });
           return (result.friends ?? []).map((f: any) => ({
+            kind: "user" as const,
             id: String(f.user_id),
             name: f.nickname || f.remark || String(f.user_id),
           }));
@@ -241,8 +242,9 @@ export function createMilkyPlugin() {
         try {
           const account = resolveAccount(cfg, accountId);
           const client = createClient(account.baseURL, account.token);
-          const result = await client.system.getGroupList({});
+          const result = await client.system.getGroupList({ no_cache: false });
           return (result.groups ?? []).map((g: any) => ({
+            kind: "group" as const,
             id: String(g.group_id),
             name: g.group_name || String(g.group_id),
           }));
@@ -256,14 +258,14 @@ export function createMilkyPlugin() {
       deliveryMode: "gateway" as const,
       textChunkLimit: 2000,
 
-      sendText: async ({ to, text, accountId, account: ctxAccount, replyTo }: any) => {
-        const account: ResolvedMilkyAccount = ctxAccount ?? resolveAccount({}, accountId);
+      sendText: async ({ cfg, to, text, accountId, replyToId }: any) => {
+        const account = resolveAccount(cfg, accountId);
         const client = createClient(account.baseURL, account.token);
         const target = String(to).trim();
         const group = isGroupTarget(account.accountId, target);
 
         const segments = buildOutboundSegments(text, {
-          replyToSeq: replyTo ? Number(replyTo) : null,
+          replyToSeq: replyToId ? Number(replyToId) : null,
         });
 
         try {
@@ -278,8 +280,8 @@ export function createMilkyPlugin() {
         }
       },
 
-      sendMedia: async ({ to, mediaUrl, accountId, account: ctxAccount }: any) => {
-        const account: ResolvedMilkyAccount = ctxAccount ?? resolveAccount({}, accountId);
+      sendMedia: async ({ cfg, to, mediaUrl, accountId }: any) => {
+        const account = resolveAccount(cfg, accountId);
         const client = createClient(account.baseURL, account.token);
         const target = String(to).trim();
         const group = isGroupTarget(account.accountId, target);
@@ -294,7 +296,7 @@ export function createMilkyPlugin() {
             const result = await sendMessage(client, group, target, videoSegments);
             return { channel: CHANNEL_ID, messageId: String(result.message_seq), chatId: target };
           } catch (err: any) {
-            log?.warn?.(`Milky sendVideo failed (backend may not implement it): ${err?.message || err}`);
+            console.warn(`Milky sendVideo failed (backend may not implement it): ${err?.message || err}`);
             // Fall through to send as image instead
           }
         }
@@ -311,60 +313,63 @@ export function createMilkyPlugin() {
           throw new Error(`Milky sendMedia failed: ${err?.message || err}`);
         }
       },
+    },
 
-      sendReaction: async ({ to, messageId, emoji, accountId, account: ctxAccount }: any) => {
-        const account: ResolvedMilkyAccount = ctxAccount ?? resolveAccount({}, accountId);
+    actions: {
+      describeMessageTool: () => ({
+        actions: ["react", "unsend"] as const,
+      }),
+      handleAction: async (ctx: any) => {
+        const { action, cfg, params, accountId } = ctx;
+        const account = resolveAccount(cfg, accountId);
         const client = createClient(account.baseURL, account.token);
-        const target = String(to).trim();
+        const target = String(params.to ?? "").trim();
         const group = isGroupTarget(account.accountId, target);
 
-        if (!group) {
-          // Reactions are only supported in group chats
-          return { channel: CHANNEL_ID, messageId, chatId: target };
-        }
-
-        try {
-          await client.group.sendGroupMessageReaction({
-            group_id: Number(target),
-            message_seq: Number(messageId),
-            reaction: emoji || "👍",
-            is_add: true,
-          });
-          return { channel: CHANNEL_ID, messageId, chatId: target };
-        } catch (err: any) {
-          throw new Error(`Milky sendReaction failed: ${err?.message || err}`);
-        }
-      },
-
-      unsend: async ({ to, messageId, accountId, account: ctxAccount }: any) => {
-        const account: ResolvedMilkyAccount = ctxAccount ?? resolveAccount({}, accountId);
-        const client = createClient(account.baseURL, account.token);
-        const target = String(to).trim();
-        const group = isGroupTarget(account.accountId, target);
-
-        try {
-          if (group) {
-            await client.message.recallGroupMessage({
-              group_id: Number(target),
-              message_seq: Number(messageId),
-            });
-          } else {
-            await client.message.recallPrivateMessage({
-              user_id: Number(target),
-              message_seq: Number(messageId),
-            });
+        if (action === "react") {
+          if (!group) {
+            return { content: "Reactions are only supported in group chats" };
           }
-          return { channel: CHANNEL_ID, messageId, chatId: target };
-        } catch (err: any) {
-          throw new Error(`Milky unsend failed: ${err?.message || err}`);
+          try {
+            await client.group.sendGroupMessageReaction({
+              group_id: Number(target),
+              message_seq: Number(params.messageId),
+              reaction: params.emoji || "\u{1F44D}",
+              reaction_type: "emoji",
+              is_add: true,
+            });
+            return { content: "Reaction added" };
+          } catch (err: any) {
+            return { content: `Milky sendReaction failed: ${err?.message || err}` };
+          }
         }
+
+        if (action === "unsend") {
+          try {
+            if (group) {
+              await client.message.recallGroupMessage({
+                group_id: Number(target),
+                message_seq: Number(params.messageId),
+              });
+            } else {
+              await client.message.recallPrivateMessage({
+                user_id: Number(target),
+                message_seq: Number(params.messageId),
+              });
+            }
+            return { content: "Message unsent" };
+          } catch (err: any) {
+            return { content: `Milky unsend failed: ${err?.message || err}` };
+          }
+        }
+
+        return { content: `Unsupported action: ${action}` };
       },
     },
 
     gateway: {
       startAccount: async (ctx: any) => {
-        const { cfg, accountId, log } = ctx;
-        const account = resolveAccount(cfg, accountId);
+        const { cfg, accountId, account, log, channelRuntime } = ctx;
 
         if (!account.enabled) {
           log?.info?.(`Milky account ${accountId} is disabled, skipping`);
@@ -391,7 +396,7 @@ export function createMilkyPlugin() {
 
         // Cache group list for routing
         try {
-          const groupList = await client.system.getGroupList({});
+          const groupList = await client.system.getGroupList({ no_cache: false });
           const groupIds = new Set<string>();
           for (const g of groupList.groups) {
             groupIds.add(String(g.group_id));
@@ -432,12 +437,14 @@ export function createMilkyPlugin() {
                   account,
                   botQQ,
                   log,
+                  cfg,
+                  channelRuntime,
                 );
               } else if (event.event_type === "friend_request") {
                 await handleFriendRequest(event.data, client, account, log);
               } else if (
-                event.event_type === "group_request" ||
-                event.event_type === "group_invitation"
+                event.event_type === "group_join_request" ||
+                event.event_type === "group_invited_join_request"
               ) {
                 await handleGroupNotification(event, client, account, log);
               }
@@ -470,7 +477,7 @@ export function createMilkyPlugin() {
     },
 
     agentPrompt: {
-      messageToolHints: () => [
+      messageToolHints: (_params: any) => [
         "",
         "### QQ (Milky) Formatting",
         "QQ supports limited formatting. Use these patterns:",
@@ -508,6 +515,8 @@ async function handleMessageReceive(
   account: ResolvedMilkyAccount,
   botQQ: number,
   log: any,
+  cfg: any,
+  channelRuntime: any,
 ) {
   // Parse all segment types
   const parsed = parseIncomingSegments(msg.segments as any);
@@ -600,12 +609,9 @@ async function handleMessageReceive(
   }
 
   try {
-    const rt = getMilkyRuntime();
-    const currentCfg = await rt.config.loadConfig();
-
-    await rt.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
+    await channelRuntime?.reply?.dispatchReplyWithBufferedBlockDispatcher({
       ctx: msgCtx,
-      cfg: currentCfg,
+      cfg,
       dispatcherOptions: {
         deliver: async (payload: { text?: string; body?: string }) => {
           const replyText = payload?.text ?? payload?.body;
@@ -677,7 +683,7 @@ async function handleGroupNotification(
     const data = event.data;
     const requesterId = String(data?.user_id ?? "");
 
-    if (event.event_type === "group_request") {
+    if (event.event_type === "group_join_request") {
       if (requesterId && account.allowedUserIds.includes(requesterId) && account.autoAcceptFriendRequest) {
         try {
           await client.group.acceptGroupRequest(data);
@@ -686,7 +692,7 @@ async function handleGroupNotification(
           log?.warn?.(`Milky acceptGroupRequest failed (API may not be implemented): ${err?.message || err}`);
         }
       }
-    } else if (event.event_type === "group_invitation") {
+    } else if (event.event_type === "group_invited_join_request") {
       if (account.autoAcceptGroupInvitation) {
         try {
           await client.group.acceptGroupInvitation(data);

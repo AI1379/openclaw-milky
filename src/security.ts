@@ -11,10 +11,10 @@ export function authorizeUserForDm(
     return { allowed: true };
   }
   if (allowedUserIds.length === 0) {
-    return { allowed: false; reason: "allowlist-empty" };
+    return { allowed: false, reason: "allowlist-empty" };
   }
   if (!allowedUserIds.includes(userId)) {
-    return { allowed: false; reason: "not-allowlisted" };
+    return { allowed: false, reason: "not-allowlisted" };
   }
   return { allowed: true };
 }
