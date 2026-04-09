@@ -28,5 +28,6 @@ export function resolveAccount(cfg: any, accountId?: string | null): ResolvedMil
     autoAcceptFriendRequest: acct.autoAcceptFriendRequest !== false,
     autoAcceptGroupInvitation: acct.autoAcceptGroupInvitation !== false,
     botQQ: acct.botQQ || null,
+    groupLogDir: acct.groupLogDir || "~/.openclaw/workspace/logs/milky-groups",
   };
 }

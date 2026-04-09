@@ -24,8 +24,9 @@ const MilkyAccountSchema = z.object({
   connectionKind: z.enum(["sse", "websocket", "auto"]).default("websocket").describe("Event streaming transport. Lagrange.Milky uses WebSocket by default."),
   dmPolicy: z.enum(["allowlist", "open"]).default("allowlist").describe("DM authorization policy: 'allowlist' only allows allowedUserIds, 'open' allows anyone"),
   allowedUserIds: z.array(z.string()).default([]).describe("QQ user IDs allowed to DM the bot"),
-  groupPolicy: z.enum(["all", "allowlist"]).default("all").describe("Group message policy: 'all' responds in all groups, 'allowlist' only responds in allowedGroups"),
-  allowedGroups: z.array(z.string()).default([]).describe("Group IDs the bot should respond to (only used when groupPolicy=allowlist)"),
+  groupPolicy: z.enum(["all", "allowlist", "mention"]).default("all").describe("Group message policy: 'all' responds in all groups, 'allowlist' only responds in allowedGroups, 'mention' only responds when @bot and logs other messages to JSONL"),
+  groupLogDir: z.string().default("~/.openclaw/workspace/logs/milky-groups").describe("Directory for group message JSONL logs (used when groupPolicy=mention)"),
+  allowedGroups: z.array(z.string()).default([]).describe("Group IDs the bot should respond to (only used when groupPolicy=allowlist or mention)"),
   autoAcceptFriendRequest: z.boolean().default(true).describe("Auto-accept friend requests from allowedUserIds"),
   autoAcceptGroupInvitation: z.boolean().default(true).describe("Auto-accept group invitations sent to the bot"),
   botQQ: z.number().nullable().default(null).describe("Bot QQ number (auto-detected on connect, usually no need to set)"),
@@ -583,6 +584,40 @@ async function handleMessageReceive(
     }
   }
 
+  // Mention-only mode: check if bot is mentioned
+  let botMentioned = false;
+  if (chatType === "group" && account.groupPolicy === "mention") {
+    if (!account.allowedGroups.includes(from)) {
+      log?.info?.(`Milky group message blocked from group ${from}: not in allowedGroups`);
+      return;
+    }
+    // Check if bot QQ is mentioned in the parsed text
+    const botMentionPattern = new RegExp(`@全体成员|@${botQQ}\\b`);
+    const segments = msg.segments as any[] | undefined;
+    if (segments) {
+      for (const seg of segments) {
+        if (seg.type === "mention_all" || (seg.type === "mention" && String(seg.data?.user_id) === String(botQQ))) {
+          botMentioned = true;
+          break;
+        }
+      }
+    }
+    if (!botMentioned && botMentionPattern.test(text)) {
+      botMentioned = true;
+    }
+    // Log all group messages to JSONL regardless of mention
+    await appendGroupLog(account.groupLogDir, from, {
+      ts: new Date().toISOString(),
+      sender_id: String(msg.sender_id),
+      sender_name: senderName,
+      message_seq: msg.message_seq,
+      text,
+      media: resolved.mediaAttachments.map(a => ({ type: a.type, url: a.url || "" })),
+      bot_mentioned: botMentioned,
+    });
+    if (!botMentioned) return;
+  }
+
   const msgCtx: Record<string, any> = {
     Body: text,
     From: from,
@@ -697,5 +732,25 @@ async function handleGroupNotification(
     }
   } catch (err: any) {
     log?.warn?.(`Milky group notification handling failed: ${err?.message || err}`);
+  }
+}
+
+/**
+ * Append a group message to the JSONL log file.
+ * One file per group: {groupLogDir}/{groupId}.jsonl
+ */
+async function appendGroupLog(
+  groupLogDir: string,
+  groupId: string,
+  entry: Record<string, any>,
+) {
+  try {
+    const dir = groupLogDir.replace(/^~/, process.env.HOME || "/root");
+    await import("fs").then(fs => fs.promises.mkdir(dir, { recursive: true }));
+    const filePath = `${dir}/${groupId}.jsonl`;
+    const line = JSON.stringify(entry) + "\n";
+    await import("fs").then(fs => fs.promises.appendFile(filePath, line, "utf-8"));
+  } catch (err: any) {
+    console.warn(`Milky: failed to write group log: ${err?.message || err}`);
   }
 }
