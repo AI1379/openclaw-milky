@@ -11,8 +11,9 @@ export function listAccountIds(cfg: any): string[] {
 
 export function resolveAccount(cfg: any, accountId?: string | null): ResolvedMilkyAccount {
   const id = accountId || DEFAULT_ACCOUNT_ID;
-  const accounts = cfg?.channels?.[CHANNEL_ID]?.accounts;
-  const acct = accounts?.[id] || {};
+  const channelCfg = cfg?.channels?.[CHANNEL_ID] || {};
+  const accounts = channelCfg.accounts;
+  const acct = accounts?.[id] || channelCfg || {};
 
   return {
     accountId: id,

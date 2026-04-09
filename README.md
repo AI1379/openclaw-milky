@@ -26,7 +26,7 @@ Add to your `openclaw.json`:
           "baseURL": "http://127.0.0.1:3000",
           "token": "",
           "enabled": true,
-          "connectionKind": "sse",
+          "connectionKind": "websocket",
           "dmPolicy": "allowlist",
           "allowedUserIds": ["123456789"]
         }

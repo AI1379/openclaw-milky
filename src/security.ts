@@ -2,6 +2,11 @@ export type DmAuthorizationResult =
   | { allowed: true }
   | { allowed: false; reason: "allowlist-empty" | "not-allowlisted" };
 
+/**
+ * Check whether a user is authorized to DM the bot.
+ * NOTE: Both `userId` and entries in `allowedUserIds` must be strings.
+ * Callers should ensure String() conversion (e.g. QQ number 123456 → "123456").
+ */
 export function authorizeUserForDm(
   userId: string,
   dmPolicy: "open" | "allowlist",

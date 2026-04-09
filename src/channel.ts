@@ -32,18 +32,7 @@ const MilkyAccountSchema = z.object({
 });
 
 const MilkyConfigSchema = buildChannelConfigSchema(
-  z.object({
-    baseURL: z.string().optional(),
-    token: z.string().optional(),
-    enabled: z.boolean().optional(),
-    connectionKind: z.enum(["sse", "websocket", "auto"]).optional(),
-    dmPolicy: z.enum(["allowlist", "open"]).optional(),
-    allowedUserIds: z.array(z.string()).optional(),
-    groupPolicy: z.enum(["all", "allowlist"]).optional(),
-    allowedGroups: z.array(z.string()).optional(),
-    autoAcceptFriendRequest: z.boolean().optional(),
-    autoAcceptGroupInvitation: z.boolean().optional(),
-    botQQ: z.number().nullable().optional(),
+  MilkyAccountSchema.partial().extend({
     accounts: z.record(z.string(), MilkyAccountSchema).optional(),
   }),
 );
@@ -297,7 +286,10 @@ export function createMilkyPlugin() {
             return { channel: CHANNEL_ID, messageId: String(result.message_seq), chatId: target };
           } catch (err: any) {
             console.warn(`Milky sendVideo failed (backend may not implement it): ${err?.message || err}`);
-            // Fall through to send as image instead
+            // Degrade to text notification since image fallback won't work for video
+            const fallbackSegments = buildOutboundSegments("[视频发送失败：后端暂不支持视频上传]");
+            const fallbackResult = await sendMessage(client, group, target, fallbackSegments);
+            return { channel: CHANNEL_ID, messageId: String(fallbackResult.message_seq), chatId: target };
           }
         }
         const segments = [{ type: segmentType, data: { uri: mediaUrl } }];
@@ -401,6 +393,7 @@ export function createMilkyPlugin() {
           for (const g of groupList.groups) {
             groupIds.add(String(g.group_id));
           }
+          for (const gId of account.allowedGroups) groupIds.add(String(gId));
           knownGroups.set(account.accountId, groupIds);
           log?.info?.(`Milky cached ${groupIds.size} groups`);
         } catch (err: any) {
@@ -684,7 +677,7 @@ async function handleGroupNotification(
     const requesterId = String(data?.user_id ?? "");
 
     if (event.event_type === "group_join_request") {
-      if (requesterId && account.allowedUserIds.includes(requesterId) && account.autoAcceptFriendRequest) {
+      if (requesterId && account.allowedUserIds.includes(requesterId) && account.autoAcceptGroupInvitation) {
         try {
           await client.group.acceptGroupRequest(data);
           log?.info?.(`Milky auto-accepted group request from ${requesterId}`);

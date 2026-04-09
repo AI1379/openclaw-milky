@@ -23,7 +23,6 @@ export interface MediaAttachment {
  */
 export function parseIncomingSegments(
   segments: any[],
-  getResourceUrl?: (resourceId: string) => Promise<string>,
 ): ParsedMessage {
   if (!Array.isArray(segments)) {
     return { text: "", mediaAttachments: [], replyToSeq: null };
