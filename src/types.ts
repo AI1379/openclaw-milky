@@ -7,7 +7,8 @@ export interface ResolvedMilkyAccount {
   dmPolicy: "allowlist" | "open";
   allowedUserIds: string[];
   allowedGroups: string[];
-  groupPolicy: "all" | "allowlist" | "mention";
+  groupPolicy: "all" | "allowlist";
+  groupMentionOnly: boolean;
   autoAcceptFriendRequest: boolean;
   autoAcceptGroupInvitation: boolean;
   botQQ: number | null;

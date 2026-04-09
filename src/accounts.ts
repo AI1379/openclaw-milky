@@ -25,6 +25,7 @@ export function resolveAccount(cfg: any, accountId?: string | null): ResolvedMil
     allowedUserIds: (acct.allowedUserIds || []).map(String),
     allowedGroups: (acct.allowedGroups || []).map(String),
     groupPolicy: acct.groupPolicy || "all",
+    groupMentionOnly: acct.groupMentionOnly === true,
     autoAcceptFriendRequest: acct.autoAcceptFriendRequest !== false,
     autoAcceptGroupInvitation: acct.autoAcceptGroupInvitation !== false,
     botQQ: acct.botQQ || null,

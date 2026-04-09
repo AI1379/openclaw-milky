@@ -24,8 +24,9 @@ const MilkyAccountSchema = z.object({
   connectionKind: z.enum(["sse", "websocket", "auto"]).default("websocket").describe("Event streaming transport. Lagrange.Milky uses WebSocket by default."),
   dmPolicy: z.enum(["allowlist", "open"]).default("allowlist").describe("DM authorization policy: 'allowlist' only allows allowedUserIds, 'open' allows anyone"),
   allowedUserIds: z.array(z.string()).default([]).describe("QQ user IDs allowed to DM the bot"),
-  groupPolicy: z.enum(["all", "allowlist", "mention"]).default("all").describe("Group message policy: 'all' responds in all groups, 'allowlist' only responds in allowedGroups, 'mention' only responds when @bot and logs other messages to JSONL"),
-  groupLogDir: z.string().default("~/.openclaw/workspace/logs/milky-groups").describe("Directory for group message JSONL logs (used when groupPolicy=mention)"),
+  groupPolicy: z.enum(["all", "allowlist"]).default("all").describe("Group message policy: 'all' responds in all groups, 'allowlist' only responds in allowedGroups"),
+  groupMentionOnly: z.boolean().default(false).describe("When true, only @bot messages enter context; all other group messages are logged to JSONL"),
+  groupLogDir: z.string().default("~/.openclaw/workspace/logs/milky-groups").describe("Directory for group message JSONL logs (used when groupMentionOnly=true)"),
   allowedGroups: z.array(z.string()).default([]).describe("Group IDs the bot should respond to (only used when groupPolicy=allowlist or mention)"),
   autoAcceptFriendRequest: z.boolean().default(true).describe("Auto-accept friend requests from allowedUserIds"),
   autoAcceptGroupInvitation: z.boolean().default(true).describe("Auto-accept group invitations sent to the bot"),
@@ -586,13 +587,8 @@ async function handleMessageReceive(
 
   // Mention-only mode: check if bot is mentioned
   let botMentioned = false;
-  if (chatType === "group" && account.groupPolicy === "mention") {
-    if (!account.allowedGroups.includes(from)) {
-      log?.info?.(`Milky group message blocked from group ${from}: not in allowedGroups`);
-      return;
-    }
-    // Check if bot QQ is mentioned in the parsed text
-    const botMentionPattern = new RegExp(`@全体成员|@${botQQ}\\b`);
+  if (chatType === "group" && account.groupMentionOnly) {
+    // Check if bot QQ is mentioned in the segments
     const segments = msg.segments as any[] | undefined;
     if (segments) {
       for (const seg of segments) {
@@ -601,9 +597,6 @@ async function handleMessageReceive(
           break;
         }
       }
-    }
-    if (!botMentioned && botMentionPattern.test(text)) {
-      botMentioned = true;
     }
     // Log all group messages to JSONL regardless of mention
     await appendGroupLog(account.groupLogDir, from, {
