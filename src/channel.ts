@@ -90,6 +90,12 @@ async function resolveMediaUrls(
   return parsed;
 }
 
+let savedRuntime: any = null;
+
+export function setMilkyRuntime(runtime: any) {
+  savedRuntime = runtime;
+}
+
 export function createMilkyPlugin() {
   return {
     id: CHANNEL_ID,
@@ -630,37 +636,129 @@ async function handleMessageReceive(
   }
 
   try {
-    await channelRuntime?.reply?.dispatchReplyWithBufferedBlockDispatcher({
-      ctx: msgCtx,
+    const runtime = savedRuntime;
+    if (!runtime?.channel?.reply) {
+      log?.error?.(`Milky: runtime not available. Ensure setMilkyRuntime(api.runtime) is called in register().`);
+      return;
+    }
+
+    const conversationId = chatType === "group" ? `group:${from}` : `private:${from}`;
+    const baseSessionKey = chatType === "group"
+      ? `session:milky:group:${from}`
+      : `session:milky:private:${from}`;
+
+    const peer = chatType === "group"
+      ? { kind: "group", id: from }
+      : { kind: "direct", id: from };
+
+    // Resolve agent route
+    const route = await runtime.channel.routing.resolveAgentRoute({
+      channel: CHANNEL_ID,
+      conversationId,
+      senderId: String(msg.sender_id),
+      text,
       cfg,
-      dispatcherOptions: {
-        deliver: async (payload: { text?: string; body?: string }) => {
-          const replyText = payload?.text ?? payload?.body;
-          if (!replyText) return;
+      ctx: {},
+      peer,
+    });
 
-          const segments = buildOutboundSegments(replyText, {
-            replyToSeq: resolved.replyToSeq,
+    const effectiveAgentId = String(route?.agentId || "main");
+    const sessionKey = `agent:${effectiveAgentId}:${baseSessionKey}`;
+
+    // Override route session key
+    if (route) {
+      route.agentId = effectiveAgentId;
+      route.sessionKey = sessionKey;
+    }
+
+    // Build context payload
+    const ctxPayload: Record<string, unknown> = {
+      Body: text,
+      RawBody: text,
+      CommandBody: text,
+      From: `milky:${conversationId}`,
+      To: "me",
+      SessionKey: sessionKey,
+      SessionDisplayName: sessionKey,
+      displayName: sessionKey,
+      name: sessionKey,
+      Title: sessionKey,
+      ConversationTitle: sessionKey,
+      Topic: sessionKey,
+      Subject: sessionKey,
+      AccountId: account.accountId,
+      ChatType: chatType,
+      ConversationLabel: sessionKey,
+      SenderName: senderName,
+      SenderId: String(msg.sender_id),
+      Provider: CHANNEL_ID,
+      Surface: CHANNEL_ID,
+      MessageSid: String(msg.message_seq),
+      WasMentioned: chatType === "group" ? botMentioned : true,
+      CommandAuthorized: true,
+      OriginatingChannel: CHANNEL_ID,
+      OriginatingTo: conversationId,
+    };
+
+    if (resolved.replyToSeq) {
+      ctxPayload.ReplyToSeq = String(resolved.replyToSeq);
+    }
+
+    // Create reply dispatcher
+    const result = await runtime.channel.reply.createReplyDispatcherWithTyping({
+      responsePrefix: "",
+      responsePrefixContextProvider: () => ({}),
+      humanDelay: 0,
+      deliver: async (payload: any) => {
+        const replyText = payload?.text ?? payload?.body;
+        if (!replyText) return;
+
+        const segments = buildOutboundSegments(replyText, {
+          replyToSeq: resolved.replyToSeq,
+        });
+
+        if (chatType === "group") {
+          await client.message.sendGroupMessage({
+            group_id: Number(from),
+            message: segments,
           });
+        } else {
+          await client.message.sendPrivateMessage({
+            user_id: Number(from),
+            message: segments,
+          });
+        }
+      },
+      onError: (err: any, info: any) => {
+        log?.error?.(`Milky reply error (${info?.kind}): ${err?.message || err}`);
+      },
+      onReplyStart: () => {
+        log?.info?.(`Agent reply started for ${from} (${chatType})`);
+      },
+      onIdle: () => {},
+    });
 
-          if (chatType === "group") {
-            await client.message.sendGroupMessage({
-              group_id: Number(from),
-              message: segments,
-            });
-          } else {
-            await client.message.sendPrivateMessage({
-              user_id: Number(from),
-              message: segments,
-            });
-          }
-        },
-        onReplyStart: () => {
-          log?.info?.(`Agent reply started for ${from} (${chatType})`);
-        },
+    const dispatcher = result?.dispatcher;
+    const markDispatchIdle = result?.markDispatchIdle;
+
+    if (!dispatcher) {
+      log?.error?.(`Milky: failed to create reply dispatcher`);
+      return;
+    }
+
+    await runtime.channel.reply.dispatchReplyFromConfig({
+      ctx: ctxPayload,
+      cfg,
+      dispatcher,
+      replyOptions: {
+        ...(result?.replyOptions || {}),
+        disableBlockStreaming: true,
       },
     });
+
+    markDispatchIdle?.();
   } catch (err: any) {
-    log?.warn?.(`Milky dispatch error: ${err?.message || err}`);
+    log?.error?.(`Milky dispatch error: ${err?.message || err}`);
   }
 }
 
