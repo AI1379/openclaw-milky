@@ -4,6 +4,8 @@ OpenClaw channel plugin for QQ via the [Milky](https://milky.ntqqrev.org/) proto
 
 Uses [LagrangeV2.Milky](https://github.com/LagrangeDev/Lagrange.Core) as the protocol endpoint.
 
+QQ 交流群：529674493
+
 ## Installation
 
 ```bash
