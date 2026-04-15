@@ -10,6 +10,8 @@ import {
   parseIncomingSegments,
   detectMediaType,
   buildOutboundSegments,
+  parseForwardedSegments,
+  formatFileSize,
   type ParsedMessage,
 } from "./client.js";
 import { authorizeUserForDm } from "./security.js";
@@ -69,11 +71,14 @@ async function sendMessage(
   });
 }
 
-/** Helper: resolve media attachment URLs using get_resource_temp_url. */
+/** Helper: resolve media attachment URLs, forward contents, and file download URLs. */
 async function resolveMediaUrls(
   parsed: ParsedMessage,
   client: ReturnType<typeof createClient>,
+  messageScene: string,
+  peerId: number,
 ): Promise<ParsedMessage> {
+  // 1. Resolve image/record/video resource URLs
   for (const att of parsed.mediaAttachments) {
     if (att.resourceId && !att.url) {
       try {
@@ -82,11 +87,74 @@ async function resolveMediaUrls(
         });
         att.url = result.url;
       } catch (err: any) {
-        // Log but don't fail the whole message for a single media resolution failure
         console.warn(`Milky: failed to resolve resource URL for ${att.resourceId}: ${err?.message || err}`);
       }
     }
   }
+
+  // 2. Expand forward messages: fetch sub-messages via getForwardedMessages
+  if (parsed.forwards.length > 0) {
+    const forwardTextParts: string[] = [];
+    for (const fwd of parsed.forwards) {
+      if (!fwd.forwardId) continue;
+      try {
+        const result = await client.message.getForwardedMessages({
+          forward_id: fwd.forwardId,
+        });
+        const messages = result.messages;
+        if (messages && messages.length > 0) {
+          forwardTextParts.push(`── 合并转发: ${fwd.title || "(无标题)"} ──`);
+          for (const m of messages) {
+            const subText = parseForwardedSegments(m.segments as any[]);
+            const sender = m.sender_name ?? "(未知)";
+            const timeStr = m.time
+              ? new Date(m.time * 1000).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false })
+              : "";
+            forwardTextParts.push(`${sender}${timeStr ? ` [${timeStr}]` : ""}: ${subText}`);
+          }
+        } else {
+          forwardTextParts.push(`── 合并转发: ${fwd.title || "(无标题)"} ── (内容为空)`);
+        }
+      } catch (err: any) {
+        console.warn(`Milky: failed to fetch forwarded messages ${fwd.forwardId}: ${err?.message || err}`);
+        forwardTextParts.push(`── 合并转发: ${fwd.title || "(无标题)"} ── (获取失败: ${err?.message || err})`);
+      }
+    }
+    if (forwardTextParts.length > 0) {
+      parsed.text += "\n" + forwardTextParts.join("\n");
+    }
+  }
+
+  // 3. Resolve file download URLs
+  if (parsed.files.length > 0) {
+    for (const f of parsed.files) {
+      if (!f.fileId) continue;
+      try {
+        let result: { download_url: string };
+        if (messageScene === "group") {
+          result = await client.file.getGroupFileDownloadUrl({
+            group_id: peerId,
+            file_id: f.fileId,
+          });
+        } else {
+          // Private file download requires file_hash; skip if unavailable
+          if (!f.fileHash) {
+            console.warn(`Milky: skipping private file ${f.fileId} (no file_hash for download URL)`);
+            continue;
+          }
+          result = await client.file.getPrivateFileDownloadUrl({
+            user_id: peerId,
+            file_id: f.fileId,
+            file_hash: f.fileHash,
+          });
+        }
+        f.downloadUrl = result.download_url;
+      } catch (err: any) {
+        console.warn(`Milky: failed to get file download URL for ${f.fileId}: ${err?.message || err}`);
+      }
+    }
+  }
+
   return parsed;
 }
 
@@ -519,11 +587,18 @@ async function handleMessageReceive(
   cfg: any,
   channelRuntime: any,
 ) {
+  // Skip messages sent by the bot itself (e.g., messages sent from phone)
+  if (String(msg.sender_id) === String(botQQ)) {
+    return;
+  }
+
   // Parse all segment types
   const parsed = parseIncomingSegments(msg.segments as any);
 
-  // Resolve media attachment URLs
-  const resolved = await resolveMediaUrls(parsed, client);
+  // Resolve media attachment URLs, expand forwards, resolve file download URLs
+  const resolved = await resolveMediaUrls(
+    parsed, client, msg.message_scene, Number(msg.peer_id),
+  );
 
   // Build final text body
   const textParts: string[] = [];
@@ -539,8 +614,16 @@ async function handleMessageReceive(
     }
   }
 
+  // Append file download URLs
+  for (const f of resolved.files) {
+    if (f.downloadUrl) {
+      const sizeStr = f.fileSize > 0 ? ` (${formatFileSize(f.fileSize)})` : "";
+      textParts.push(`\n[文件下载: ${f.fileName}${sizeStr}: ${f.downloadUrl}]`);
+    }
+  }
+
   const text = textParts.join("").trim();
-  if (!text && resolved.mediaAttachments.length === 0) return;
+  if (!text && resolved.mediaAttachments.length === 0 && resolved.files.length === 0) return;
 
   let from: string;
   let chatType: "direct" | "group";
@@ -663,13 +746,14 @@ async function handleMessageReceive(
     });
 
     const effectiveAgentId = String(route?.agentId || "main");
-    const sessionKey = `agent:${effectiveAgentId}:${baseSessionKey}`;
 
-    // Override route session key
-    if (route) {
-      route.agentId = effectiveAgentId;
-      route.sessionKey = sessionKey;
-    }
+    // Use routing-returned sessionKey if available, otherwise construct it
+    const sessionKey = route?.sessionKey || `agent:${effectiveAgentId}:session:milky:${baseSessionKey}`;
+
+    // DO NOT override route.sessionKey
+    // if (route) {
+    //   route.sessionKey = sessionKey;
+    // }
 
     // Build context payload
     const ctxPayload: Record<string, unknown> = {

@@ -10,12 +10,32 @@ export interface ParsedMessage {
   text: string;
   mediaAttachments: MediaAttachment[];
   replyToSeq: number | null;
+  /** Parsed forward message metadata (if any). */
+  forwards: ForwardMeta[];
+  /** Parsed file segment metadata (if any). */
+  files: FileMeta[];
 }
 
 export interface MediaAttachment {
   type: "image" | "record" | "video";
   url: string;
   resourceId?: string;
+}
+
+export interface ForwardMeta {
+  forwardId: string;
+  title: string;
+  preview: string[];
+  summary: string;
+}
+
+export interface FileMeta {
+  fileId: string;
+  fileName: string;
+  fileSize: number;
+  fileHash?: string;
+  /** Resolved download URL (async). */
+  downloadUrl?: string;
 }
 
 /**
@@ -25,11 +45,13 @@ export function parseIncomingSegments(
   segments: any[],
 ): ParsedMessage {
   if (!Array.isArray(segments)) {
-    return { text: "", mediaAttachments: [], replyToSeq: null };
+    return { text: "", mediaAttachments: [], replyToSeq: null, forwards: [], files: [] };
   }
 
   const textParts: string[] = [];
   const mediaAttachments: MediaAttachment[] = [];
+  const forwards: ForwardMeta[] = [];
+  const files: FileMeta[] = [];
   let replyToSeq: number | null = null;
 
   for (const seg of segments) {
@@ -98,13 +120,30 @@ export function parseIncomingSegments(
         }
         break;
 
-      case "forward":
-        textParts.push("[合并转发消息]");
+      case "forward": {
+        const fwd: ForwardMeta = {
+          forwardId: data.forward_id ?? "",
+          title: data.title ?? "",
+          preview: Array.isArray(data.preview) ? data.preview : [],
+          summary: data.summary ?? "",
+        };
+        forwards.push(fwd);
+        textParts.push(`[合并转发: ${fwd.title || fwd.preview.slice(0, 3).join(", ") || "(无标题)"}]`);
         break;
+      }
 
-      case "file":
-        textParts.push(`[文件:${data.file_name ?? data.file_id ?? "?"}]`);
+      case "file": {
+        const f: FileMeta = {
+          fileId: data.file_id ?? "",
+          fileName: data.file_name ?? data.file_id ?? "?",
+          fileSize: data.file_size ?? 0,
+          fileHash: data.file_hash ?? undefined,
+        };
+        files.push(f);
+        const sizeStr = f.fileSize > 0 ? ` (${formatFileSize(f.fileSize)})` : "";
+        textParts.push(`[文件: ${f.fileName}${sizeStr}]`);
         break;
+      }
 
       case "light_app":
         textParts.push("[小程序]");
@@ -120,7 +159,67 @@ export function parseIncomingSegments(
     text: textParts.join(""),
     mediaAttachments,
     replyToSeq,
+    forwards,
+    files,
   };
+}
+
+/**
+ * Format file size in human-readable form.
+ */
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)}GB`;
+}
+
+/**
+ * Parse sub-segments inside a forwarded message into readable text.
+ * Reuses the same logic as parseIncomingSegments but returns only text.
+ */
+export function parseForwardedSegments(segments: any[]): string {
+  if (!Array.isArray(segments)) return "";
+  const parts: string[] = [];
+  for (const seg of segments) {
+    const type: string = seg.type;
+    const data: any = seg.data ?? {};
+    switch (type) {
+      case "text":
+        parts.push(data.text ?? "");
+        break;
+      case "mention":
+        parts.push(`@${data.user_id ?? ""}`);
+        break;
+      case "mention_all":
+        parts.push("@全体成员");
+        break;
+      case "face":
+        parts.push(`[表情]`);
+        break;
+      case "image":
+        parts.push("[图片]");
+        break;
+      case "record":
+        parts.push("[语音]");
+        break;
+      case "video":
+        parts.push("[视频]");
+        break;
+      case "forward":
+        parts.push(`[合并转发: ${data.title || "(无标题)"}]`);
+        break;
+      case "file":
+        parts.push(`[文件: ${data.file_name ?? "?"}]`);
+        break;
+      case "light_app":
+        parts.push("[小程序]");
+        break;
+      default:
+        break;
+    }
+  }
+  return parts.join("").trim();
 }
 
 /**
